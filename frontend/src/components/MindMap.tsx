@@ -56,14 +56,18 @@ export function MindMap() {
   // away; later expansions wait briefly so the children spring into place
   // before their halo starts reaching outward.
   const hasPaintedOnce = useRef(false);
+  const initializedTreeId = useRef<number | null>(null);
 
-  // On first data arrival, expand only the root and focus it.
+  // On first data arrival, expand the full tree and focus the root.
   useEffect(() => {
-    if (data && expanded.size === 0) {
-      setExpanded(new Set([data.id]));
+    if (data && initializedTreeId.current !== data.id) {
+      const allIds = new Set<number>();
+      collectIds(data, allIds);
+      setExpanded(allIds);
       setFocusedId(data.id);
+      initializedTreeId.current = data.id;
     }
-  }, [data, expanded.size]);
+  }, [data]);
 
   const laidOut = useMemo(
     () => (data ? layout(data, expanded) : null),
