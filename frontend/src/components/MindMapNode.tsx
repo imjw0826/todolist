@@ -19,6 +19,7 @@ interface Props {
   // appear to fly out from there as the tree unfolds.
   initialX: number;
   initialY: number;
+  enterDelay: number;
 }
 
 // Rough width per character for the node-label font. CJK glyphs are ~font-size
@@ -42,6 +43,7 @@ export function MindMapNode({
   ensureExpanded,
   initialX,
   initialY,
+  enterDelay,
 }: Props) {
   const { isAdmin } = useAdmin();
   const [hover, setHover] = useState(false);
@@ -119,10 +121,15 @@ export function MindMapNode({
         animate={{ x, y, opacity: 1, scale: focusScale }}
         exit={{ opacity: 0, scale: 0.5 }}
         transition={{
-          x: { type: "spring", stiffness: 180, damping: 22 },
-          y: { type: "spring", stiffness: 180, damping: 22 },
-          scale: { type: "spring", stiffness: 220, damping: 24 },
-          opacity: { duration: 0.3 },
+          x: { type: "spring", stiffness: 180, damping: 22, delay: enterDelay },
+          y: { type: "spring", stiffness: 180, damping: 22, delay: enterDelay },
+          scale: {
+            type: "spring",
+            stiffness: 220,
+            damping: 24,
+            delay: enterDelay,
+          },
+          opacity: { duration: 0.3, delay: enterDelay },
         }}
         onMouseEnter={() => setHover(true)}
         onMouseLeave={() => setHover(false)}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { linkHorizontal } from "d3-shape";
 import { select } from "d3-selection";
 import { zoom, zoomIdentity } from "d3-zoom";
@@ -36,6 +36,10 @@ const linkPath = linkHorizontal<unknown, { x: number; y: number }>()
   .x((d) => d.y)
   .y((d) => d.x);
 
+function introDelay(depth: number, index: number) {
+  return Math.min(depth * 0.16 + index * 0.018, 1.1);
+}
+
 export function MindMap() {
   const { data, isLoading, error } = useTree();
   // The set of node ids whose direct children are visible. Unexpanded nodes
@@ -53,22 +57,32 @@ export function MindMap() {
   // away; later expansions wait briefly so the children spring into place
   // before their halo starts reaching outward.
   const hasPaintedOnce = useRef(false);
-  const initializedTreeId = useRef<number | null>(null);
+  const [initializedTreeId, setInitializedTreeId] = useState<number | null>(null);
+  const [introComplete, setIntroComplete] = useState(false);
+  const centeredRef = useRef(false);
 
   // On first data arrival, expand the full tree and focus the root.
   useEffect(() => {
-    if (data && initializedTreeId.current !== data.id) {
+    if (data && initializedTreeId !== data.id) {
       const allIds = new Set<number>();
       collectIds(data, allIds);
+      lastPos.current.clear();
+      hasPaintedOnce.current = false;
+      centeredRef.current = false;
       setExpanded(allIds);
       setFocusedId(data.id);
-      initializedTreeId.current = data.id;
+      setInitializedTreeId(data.id);
+      setIntroComplete(false);
     }
-  }, [data]);
+  }, [data, initializedTreeId]);
+
+  const treeReady = Boolean(
+    data && initializedTreeId === data.id && expanded.has(data.id)
+  );
 
   const laidOut = useMemo(
-    () => (data ? layout(data, expanded) : null),
-    [data, expanded]
+    () => (data && treeReady ? layout(data, expanded) : null),
+    [data, expanded, treeReady]
   );
 
   const focusedDepth = useMemo(() => {
@@ -92,6 +106,12 @@ export function MindMap() {
       hasPaintedOnce.current = true;
     }
   }, [laidOut]);
+
+  useEffect(() => {
+    if (!laidOut || introComplete) return;
+    const timer = window.setTimeout(() => setIntroComplete(true), 1600);
+    return () => window.clearTimeout(timer);
+  }, [laidOut, introComplete]);
 
   const toggle = (id: number) => {
     const wasExpanded = expanded.has(id);
@@ -139,15 +159,14 @@ export function MindMap() {
     });
   };
 
-  // Pan + zoom, with an auto-fit on first layout.
-  const centeredRef = useRef(false);
-  useEffect(() => {
+  // Pan + zoom, with an auto-fit on the first full-tree layout.
+  useLayoutEffect(() => {
     if (!svgRef.current || !gRef.current || !laidOut) return;
     const svgEl = svgRef.current;
     const gEl = gRef.current;
 
     const z = zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.6, 2.5])
+      .scaleExtent([0.25, 2.5])
       .on("zoom", (event) => {
         gEl.setAttribute("transform", event.transform.toString());
       });
@@ -171,7 +190,7 @@ export function MindMap() {
       const padding = 60;
       const scaleX = (rect.width - padding * 2) / treeW;
       const scaleY = (rect.height - padding * 2) / treeH;
-      const scale = Math.max(0.6, Math.min(1.6, Math.min(scaleX, scaleY)));
+      const scale = Math.max(0.25, Math.min(1.45, Math.min(scaleX, scaleY)));
       const cx = (minSx + maxSx) / 2;
       const cy = (minSy + maxSy) / 2;
       const tx = rect.width / 2 - cx * scale;
@@ -188,8 +207,11 @@ export function MindMap() {
   if (isLoading) {
     return <div className="loading">불러오는 중…</div>;
   }
-  if (error || !data || !laidOut) {
+  if (error || !data) {
     return <div className="loading">데이터를 불러올 수 없습니다.</div>;
+  }
+  if (!treeReady || !laidOut) {
+    return <div className="loading">불러오는 중…</div>;
   }
 
   return (
@@ -210,10 +232,15 @@ export function MindMap() {
                   expanded.has(n.data.id) &&
                   (n.data.children?.length ?? 0) > 0
               )
-              .map((n) => {
+              .map((n, index) => {
                 const prev = lastPos.current.get(n.data.id);
                 const initialX = prev?.x ?? n.y;
                 const initialY = prev?.y ?? n.x;
+                const delay = introComplete
+                  ? hasPaintedOnce.current
+                    ? 0.45
+                    : 0
+                  : introDelay(n.depth, index) + 0.12;
                 return (
                   <motion.g
                     key={`ghost-${n.data.id}`}
@@ -229,7 +256,7 @@ export function MindMap() {
                     <GhostBranches
                       nodeId={n.data.id}
                       depth={n.depth}
-                      enterDelay={hasPaintedOnce.current ? 0.45 : 0}
+                      enterDelay={delay}
                     />
                   </motion.g>
                 );
@@ -239,11 +266,14 @@ export function MindMap() {
 
         <g className="link-layer">
           <AnimatePresence>
-            {laidOut.links.map((link) => {
+            {laidOut.links.map((link, index) => {
               const d = linkPath({
                 source: { x: link.source.x, y: link.source.y },
                 target: { x: link.target.x, y: link.target.y },
               }) as string;
+              const delay = introComplete
+                ? 0
+                : introDelay(link.target.depth, index) + 0.06;
               return (
                 <motion.path
                   key={`link-${link.target.data.id}`}
@@ -256,7 +286,7 @@ export function MindMap() {
                   exit={{ opacity: 0 }}
                   transition={{
                     d: { type: "spring", stiffness: 160, damping: 22 },
-                    opacity: { duration: 0.4, ease: "easeOut" },
+                    opacity: { duration: 0.4, ease: "easeOut", delay },
                   }}
                 />
               );
@@ -266,7 +296,7 @@ export function MindMap() {
 
         <g className="node-layer">
           <AnimatePresence>
-            {laidOut.nodes.map((n) => {
+            {laidOut.nodes.map((n, index) => {
               const dataHasChildren = (n.data.children?.length ?? 0) > 0;
               // Pick the mount-time position. If the node was already visible
               // last render, reuse its last position. If it's newly visible
@@ -283,6 +313,9 @@ export function MindMap() {
                 if (parentPrev) {
                   initialX = parentPrev.x;
                   initialY = parentPrev.y;
+                } else if (!introComplete) {
+                  initialX = n.parent.y;
+                  initialY = n.parent.x;
                 }
               }
               return (
@@ -297,6 +330,7 @@ export function MindMap() {
                   ensureExpanded={ensureExpanded}
                   initialX={initialX}
                   initialY={initialY}
+                  enterDelay={introComplete ? 0 : introDelay(n.depth, index)}
                 />
               );
             })}
