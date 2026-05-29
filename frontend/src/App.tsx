@@ -10,6 +10,7 @@ export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
+        <h1 className="app-title">todolist</h1>
         <AdminLock />
         <MindMap />
       </div>

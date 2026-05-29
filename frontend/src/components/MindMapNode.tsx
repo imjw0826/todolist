@@ -261,8 +261,13 @@ export function MindMapNode({
                 ✎
               </button>
               {!isRoot && (
-                <button title="삭제" onClick={handleDelete} aria-label="삭제">
-                  🗑
+                <button
+                  className="danger"
+                  title="삭제"
+                  onClick={handleDelete}
+                  aria-label="삭제"
+                >
+                  ×
                 </button>
               )}
             </div>

@@ -40,6 +40,21 @@ button {
   font-family: inherit;
 }
 
+.app-title {
+  position: fixed;
+  top: 20px;
+  left: 24px;
+  z-index: 10;
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
 /* Admin lock at top-right */
 .admin-lock {
   position: fixed;
@@ -193,6 +208,11 @@ button {
   background: var(--ink);
   color: white;
   border-color: var(--ink);
+}
+
+.node-actions button.danger {
+  font-size: 15px;
+  font-weight: 400;
 }
 
 .node-edit-input {

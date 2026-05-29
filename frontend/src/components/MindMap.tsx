@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { linkHorizontal } from "d3-shape";
 import { select } from "d3-selection";
-import { zoom, zoomIdentity, type ZoomBehavior } from "d3-zoom";
+import { zoom, zoomIdentity } from "d3-zoom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTree } from "../hooks";
 import { layout } from "../lib/layout";
@@ -45,9 +45,6 @@ export function MindMap() {
   const [focusedId, setFocusedId] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const gRef = useRef<SVGGElement | null>(null);
-  const ghostLayerRef = useRef<SVGGElement | null>(null);
-  const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
-  const zoomEndTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   // Last seen screen position for each node id — used so a ghost group that
   // mounts on expansion springs in from the parent's *previous* position
   // (where the box was) rather than popping at the post-layout coordinates.
@@ -153,23 +150,7 @@ export function MindMap() {
       .scaleExtent([0.6, 2.5])
       .on("zoom", (event) => {
         gEl.setAttribute("transform", event.transform.toString());
-
-        // zoom 중에는 ghost layer를 즉시 숨겨 렌더 부하를 줄인다.
-        // React state를 쓰면 re-render가 발생해 오히려 느려지므로 ref로 직접 조작.
-        const ghost = ghostLayerRef.current;
-        if (ghost) {
-          ghost.style.opacity = "0";
-          ghost.style.transition = "none";
-        }
-        if (zoomEndTimer.current) clearTimeout(zoomEndTimer.current);
-        zoomEndTimer.current = setTimeout(() => {
-          if (ghost) {
-            ghost.style.transition = "opacity 0.4s ease";
-            ghost.style.opacity = "1";
-          }
-        }, 120);
       });
-    zoomRef.current = z;
     const sel = select(svgEl).call(z);
 
     if (!centeredRef.current) {
@@ -221,10 +202,14 @@ export function MindMap() {
       <g ref={gRef} style={{ willChange: "transform" }}>
         {/* Ghost branches — only for nodes that are currently expanded so
             collapsing a parent also retracts its decorative halo. */}
-        <g className="ghost-layer" ref={ghostLayerRef}>
+        <g className="ghost-layer">
           <AnimatePresence>
             {laidOut.nodes
-              .filter((n) => expanded.has(n.data.id))
+              .filter(
+                (n) =>
+                  expanded.has(n.data.id) &&
+                  (n.data.children?.length ?? 0) > 0
+              )
               .map((n) => {
                 const prev = lastPos.current.get(n.data.id);
                 const initialX = prev?.x ?? n.y;
