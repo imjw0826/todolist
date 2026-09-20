@@ -3,7 +3,13 @@
 // matching d3.linkHorizontal so they read as "real-looking" branches.
 
 export interface GhostBranch {
-  path: string;
+  // Cubic bezier control points in *local* coordinates (origin at the node).
+  // Kept as numbers rather than a path string so the canvas renderer can
+  // stroke them directly without re-parsing SVG path data every frame.
+  c1x: number;
+  c1y: number;
+  c2x: number;
+  c2y: number;
   endX: number;
   endY: number;
   endRadius: number;
@@ -74,11 +80,6 @@ export function buildGhostBranches(
 
     // sigmoid control points — horizontal at both ends
     const midX = endX * 0.5;
-    const path =
-      `M 0 0 ` +
-      `C ${midX.toFixed(2)} 0, ` +
-      `${midX.toFixed(2)} ${endY.toFixed(2)}, ` +
-      `${endX.toFixed(2)} ${endY.toFixed(2)}`;
 
     // Stagger: roughly ordered by index but with small random jitter so it
     // feels organic ("두두둑") rather than a clean wave.
@@ -95,7 +96,10 @@ export function buildGhostBranches(
     const arcLen = straight * detour;
 
     branches.push({
-      path,
+      c1x: midX,
+      c1y: 0,
+      c2x: midX,
+      c2y: endY,
       endX,
       endY,
       endRadius: 0.6 + rng() * 1.1,
