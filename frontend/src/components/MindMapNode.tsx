@@ -5,15 +5,20 @@ import type { HierarchyPointNode } from "d3-hierarchy";
 import type { TreeNode } from "../types";
 import { useAdmin } from "../store";
 import { useCreateNode, useDeleteNode, useUpdateNode } from "../hooks";
+import { nodeMetrics } from "../lib/layout";
 
 interface Props {
   node: HierarchyPointNode<TreeNode>;
   expanded: boolean;
   hasChildrenInData: boolean;
-  focused: boolean;
-  focusedDepth: number | null;
+  /** Shared width of every box in this node's column, so edges line up. */
+  boxWidth: number;
+  /** Admin actions pinned open by a tap (touch screens have no hover). */
+  touchActive: boolean;
+  onTouchSelect: (id: number | null) => void;
   onToggle: (id: number) => void;
   ensureExpanded: (id: number) => void;
+  onCreated: (id: number) => void;
   // Initial screen-space coordinates the node should mount at. For freshly
   // visible children, the caller passes the parent's prior position so they
   // appear to fly out from there as the tree unfolds.
@@ -22,25 +27,16 @@ interface Props {
   enterDelay: number;
 }
 
-// Rough width per character for the node-label font. CJK glyphs are ~font-size
-// wide; ASCII is narrower. Used so node boxes hug their label.
-function estimateBoxWidth(text: string, fontSize: number): number {
-  let w = 0;
-  for (const ch of text) {
-    const wide = ch.charCodeAt(0) > 0x2e80;
-    w += wide ? fontSize : fontSize * 0.58;
-  }
-  return Math.max(w, fontSize * 2);
-}
-
 export function MindMapNode({
   node,
   expanded,
   hasChildrenInData,
-  focused,
-  focusedDepth,
+  boxWidth,
+  touchActive,
+  onTouchSelect,
   onToggle,
   ensureExpanded,
+  onCreated,
   initialX,
   initialY,
   enterDelay,
@@ -64,18 +60,9 @@ export function MindMapNode({
   const isRoot = depth === 0;
   const isTrunk = depth <= 1;
 
-  // Focus scaling: the actively-focused node grows; same-depth siblings shrink.
-  // Other depths stay neutral.
-  const sameDepthSibling =
-    focusedDepth != null && focusedDepth === depth && !focused;
-  const focusScale = focused ? 1.18 : sameDepthSibling ? 0.85 : 1;
-
-  const fontSize = isRoot ? 14 : isTrunk ? 13 : 12;
-  const padX = isTrunk ? 12 : 10;
-  const padY = isTrunk ? 7 : 6;
-  const textW = estimateBoxWidth(node.data.title, fontSize);
-  const boxW = textW + padX * 2;
-  const boxH = fontSize + padY * 2;
+  const { fontSize, padX, boxH } = nodeMetrics(depth);
+  const boxW = boxWidth;
+  const showActions = isAdmin && (hover || touchActive) && !editing;
 
   const handleAdd = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -88,7 +75,12 @@ export function MindMapNode({
     if (!title) return;
     create.mutate(
       { parent_id: node.data.id, title },
-      { onSuccess: () => ensureExpanded(node.data.id) }
+      {
+        onSuccess: (created) => {
+          ensureExpanded(node.data.id);
+          onCreated(created.id);
+        },
+      }
     );
     setAddOpen(false);
     setAddTitle("");
@@ -118,7 +110,7 @@ export function MindMapNode({
     <>
       <motion.g
         initial={{ x: initialX, y: initialY, opacity: 0, scale: 0.6 }}
-        animate={{ x, y, opacity: 1, scale: focusScale }}
+        animate={{ x, y, opacity: 1, scale: 1 }}
         exit={{ opacity: 0, scale: 0.5 }}
         transition={{
           x: { type: "spring", stiffness: 180, damping: 22, delay: enterDelay },
@@ -150,6 +142,9 @@ export function MindMapNode({
             transition: "filter 160ms ease",
           }}
           onClick={() => hasChildrenInData && onToggle(node.data.id)}
+          onPointerUp={(e) => {
+            if (e.pointerType === "touch" && isAdmin) onTouchSelect(node.data.id);
+          }}
         />
 
         {/* Tiny indicator that the node holds collapsed children */}
@@ -227,7 +222,7 @@ export function MindMapNode({
         {/* Invisible hover bridge — fills the gap between the box and the
             action buttons so moving the cursor from one to the other doesn't
             trigger mouseleave on the group. */}
-        {isAdmin && hover && !editing && (
+        {showActions && (
           <rect
             x={boxW / 2}
             y={-Math.max(boxH / 2, 16)}
@@ -240,7 +235,7 @@ export function MindMapNode({
         )}
 
         {/* Admin hover buttons */}
-        {isAdmin && hover && !editing && (
+        {showActions && (
           <foreignObject
             x={boxW / 2 + 6}
             y={-14}

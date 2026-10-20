@@ -5,7 +5,6 @@ import { zoom, zoomIdentity, type ZoomBehavior } from "d3-zoom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTree } from "../hooks";
 import { layout } from "../lib/layout";
-import { GhostRenderer, type GhostTarget, type ViewTransform } from "../lib/ghostRenderer";
 import { MindMapNode } from "./MindMapNode";
 import type { TreeNode } from "../types";
 
@@ -13,15 +12,6 @@ function findInTree(root: TreeNode, id: number): TreeNode | null {
   if (root.id === id) return root;
   for (const c of root.children ?? []) {
     const r = findInTree(c, id);
-    if (r) return r;
-  }
-  return null;
-}
-
-function findParent(root: TreeNode, id: number): TreeNode | null {
-  for (const c of root.children ?? []) {
-    if (c.id === id) return root;
-    const r = findParent(c, id);
     if (r) return r;
   }
   return null;
@@ -40,6 +30,12 @@ function introDelay(depth: number, index: number) {
   return Math.min(depth * 0.16 + index * 0.018, 1.1);
 }
 
+interface ViewTransform {
+  x: number;
+  y: number;
+  k: number;
+}
+
 // Time constant for wheel-zoom easing. Small enough to feel immediate,
 // large enough that discrete wheel notches blend into continuous motion.
 const ZOOM_TAU = 0.08;
@@ -50,22 +46,20 @@ export function MindMap() {
   // render as leaves even if data has descendants. Single-level expansion is
   // a consequence: expanding a node never expands its grandchildren.
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
-  const [focusedId, setFocusedId] = useState<number | null>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const gRef = useRef<SVGGElement | null>(null);
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const rendererRef = useRef<GhostRenderer | null>(null);
   // Starts the shared rAF loop. Held in a ref so effects declared before the
   // loop is built can still poke it.
   const kickRef = useRef<(() => void) | null>(null);
-  // Last seen screen position for each node id — used so a ghost group that
-  // mounts on expansion springs in from the parent's *previous* position
-  // (where the box was) rather than popping at the post-layout coordinates.
+  // Last seen screen position for each node id — used so a node that mounts
+  // on expansion springs in from the parent's *previous* position (where the
+  // box was) rather than popping at the post-layout coordinates.
   const lastPos = useRef<Map<number, { x: number; y: number }>>(new Map());
-  // First paint? On the very first render the root ghost should bloom right
-  // away; later expansions wait briefly so the children spring into place
-  // before their halo starts reaching outward.
-  const hasPaintedOnce = useRef(false);
+  // Node whose admin actions are pinned open by a tap (touch has no hover).
+  const [touchActiveId, setTouchActiveId] = useState<number | null>(null);
+  // Freshly created node to bring into view once it has been laid out.
+  const [revealId, setRevealId] = useState<number | null>(null);
+  const revealRaf = useRef(0);
   const [initializedTreeId, setInitializedTreeId] = useState<number | null>(null);
   const [introComplete, setIntroComplete] = useState(false);
   const centeredRef = useRef(false);
@@ -74,7 +68,6 @@ export function MindMap() {
   const targetTf = useRef<ViewTransform>({ x: 0, y: 0, k: 1 });
   const currentTf = useRef<ViewTransform>({ x: 0, y: 0, k: 1 });
   const zoomRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
-  const ghostTargetsRef = useRef<GhostTarget[]>([]);
 
   // On first data arrival, expand the full tree and focus the root.
   useEffect(() => {
@@ -82,10 +75,8 @@ export function MindMap() {
       const allIds = new Set<number>();
       collectIds(data, allIds);
       lastPos.current.clear();
-      hasPaintedOnce.current = false;
       centeredRef.current = false;
       setExpanded(allIds);
-      setFocusedId(data.id);
       setInitializedTreeId(data.id);
       setIntroComplete(false);
     }
@@ -100,53 +91,13 @@ export function MindMap() {
     [data, expanded, treeReady]
   );
 
-  const focusedDepth = useMemo(() => {
-    if (!laidOut || focusedId == null) return null;
-    const n = laidOut.nodes.find((x) => x.data.id === focusedId);
-    return n ? n.depth : null;
-  }, [laidOut, focusedId]);
-
-  // Ghost spawn positions have to be read during render, before the snapshot
-  // effect below overwrites lastPos with the new layout.
-  const ghostTargets = useMemo<GhostTarget[]>(() => {
-    if (!laidOut) return [];
-    return laidOut.nodes
-      .filter(
-        (n) => expanded.has(n.data.id) && (n.data.children?.length ?? 0) > 0
-      )
-      .map((n, index) => {
-        const prev = lastPos.current.get(n.data.id);
-        return {
-          id: n.data.id,
-          depth: n.depth,
-          x: n.y,
-          y: n.x,
-          spawnX: prev?.x ?? n.y,
-          spawnY: prev?.y ?? n.x,
-          enterDelay: introComplete
-            ? hasPaintedOnce.current
-              ? 0.45
-              : 0
-            : introDelay(n.depth, index) + 0.12,
-        };
-      });
-  }, [laidOut, expanded, introComplete]);
-
-  ghostTargetsRef.current = ghostTargets;
-
   // After each commit, snapshot the current screen position of every visible
-  // node. Read on the *next* render to seed the mount position for any node or
-  // ghost group that just appeared, so it springs from the old spot.
+  // node. Read on the *next* render to seed the mount position for any node
+  // that just appeared, so it springs from the old spot.
   useEffect(() => {
     if (!laidOut) return;
     for (const n of laidOut.nodes) {
       lastPos.current.set(n.data.id, { x: n.y, y: n.x });
-    }
-    // 자식 노드가 실제로 화면에 등장한 뒤에만 true로 설정.
-    // 루트만 있는 초기 렌더에서는 false를 유지해 첫 화면에서
-    // 노드와 고스트가 함께 나타나도록 한다.
-    if (laidOut.nodes.length > 1) {
-      hasPaintedOnce.current = true;
     }
   }, [laidOut]);
 
@@ -180,14 +131,6 @@ export function MindMap() {
       }
       return next;
     });
-    // Collapse moves focus up to the parent so this node shrinks back to its
-    // resting size. Expansion focuses the node itself.
-    if (wasExpanded) {
-      const parent = data ? findParent(data, id) : null;
-      setFocusedId(parent ? parent.id : data?.id ?? null);
-    } else {
-      setFocusedId(id);
-    }
   };
 
   // After mutations (add child), keep the parent expanded so the new node
@@ -205,20 +148,13 @@ export function MindMap() {
   const ready = Boolean(laidOut);
 
   // Pan + zoom. d3-zoom owns the *target* transform; a rAF loop eases the
-  // rendered transform toward it and repaints the ghost canvas in the same
-  // frame, so wheel notches read as continuous motion instead of jumps.
+  // rendered transform toward it, so wheel notches read as continuous motion
+  // instead of jumps.
   useLayoutEffect(() => {
     if (!ready) return;
     const svgEl = svgRef.current;
     const gEl = gRef.current;
-    const canvasEl = canvasRef.current;
-    if (!svgEl || !gEl || !canvasEl) return;
-
-    const renderer = new GhostRenderer(canvasEl);
-    rendererRef.current = renderer;
-    // The ghost effect below is keyed on the target list, which hasn't
-    // changed on a remount — seed the new renderer directly instead.
-    renderer.setGroups(ghostTargetsRef.current);
+    if (!svgEl || !gEl) return;
 
     const target = targetTf.current;
     const current = currentTf.current;
@@ -229,12 +165,6 @@ export function MindMap() {
     let smoothing = false;
     let raf = 0;
     let lastTime = 0;
-
-    const syncCanvas = () => {
-      const rect = svgEl.getBoundingClientRect();
-      renderer.resize(rect.width, rect.height, window.devicePixelRatio || 1);
-    };
-    syncCanvas();
 
     const advance = (dt: number): boolean => {
       if (!smoothing || !anchor) {
@@ -268,13 +198,11 @@ export function MindMap() {
       lastTime = now;
 
       const viewMoving = advance(dt);
-      const ghostsMoving = renderer.step(dt);
-      renderer.draw(current);
       gEl.setAttribute(
         "transform",
         `translate(${current.x},${current.y}) scale(${current.k})`
       );
-      if (viewMoving || ghostsMoving) kick();
+      if (viewMoving) kick();
     };
 
     const kick = () => {
@@ -312,12 +240,6 @@ export function MindMap() {
     zoomRef.current = z;
     const sel = select(svgEl).call(z);
 
-    const ro = new ResizeObserver(() => {
-      syncCanvas();
-      kick();
-    });
-    ro.observe(svgEl);
-
     // Restore whatever transform was already in effect (StrictMode remount,
     // or a re-attach after the tree changed).
     const existing = zoomIdentity
@@ -327,23 +249,54 @@ export function MindMap() {
     kick();
 
     return () => {
-      ro.disconnect();
       if (raf) cancelAnimationFrame(raf);
       sel.on(".zoom", null);
       zoomRef.current = null;
       kickRef.current = null;
-      rendererRef.current = null;
     };
   }, [ready]);
 
-  // Feed the ghost layer. Separate from the zoom setup so layout changes
-  // don't tear down and rebuild the zoom behaviour.
+  // Pan (without zooming) so a newly created node is on screen. New nodes
+  // often land past the viewport edge, which made adding look like it failed.
   useEffect(() => {
-    const renderer = rendererRef.current;
-    if (!renderer) return;
-    renderer.setGroups(ghostTargets);
-    kickRef.current?.();
-  }, [ghostTargets]);
+    if (revealId == null || !laidOut) return;
+    const svgEl = svgRef.current;
+    const z = zoomRef.current;
+    const n = laidOut.nodes.find((x) => x.data.id === revealId);
+    if (!svgEl || !z || !n) return;
+    setRevealId(null);
+
+    const rect = svgEl.getBoundingClientRect();
+    const { x: tx, y: ty, k } = targetTf.current;
+    const sx = n.y * k + tx;
+    const sy = n.x * k + ty;
+    const margin = 120;
+    const dx =
+      sx < margin ? margin - sx : sx > rect.width - margin ? rect.width - margin - sx : 0;
+    const dy =
+      sy < margin ? margin - sy : sy > rect.height - margin ? rect.height - margin - sy : 0;
+    if (!dx && !dy) return;
+
+    // Short eased pan driven through d3-zoom so its state stays in sync.
+    // The frame handle lives in a ref: clearing revealId above re-runs this
+    // effect, and a cleanup-based cancel would kill the pan before it starts.
+    const from = { x: tx, y: ty };
+    const start = performance.now();
+    const duration = 450;
+    cancelAnimationFrame(revealRaf.current);
+    const step = (now: number) => {
+      const t = Math.min((now - start) / duration, 1);
+      const e = 1 - Math.pow(1 - t, 3);
+      select(svgEl).call(
+        z.transform,
+        zoomIdentity.translate(from.x + dx * e, from.y + dy * e).scale(k)
+      );
+      revealRaf.current = t < 1 ? requestAnimationFrame(step) : 0;
+    };
+    revealRaf.current = requestAnimationFrame(step);
+  }, [revealId, laidOut]);
+
+  useEffect(() => () => cancelAnimationFrame(revealRaf.current), []);
 
   // Auto-fit once, on the first full-tree layout.
   useLayoutEffect(() => {
@@ -393,17 +346,6 @@ export function MindMap() {
 
   return (
     <div style={{ position: "absolute", inset: 0, zIndex: 0 }}>
-      {/* Ghost halos live on a canvas: ~700 decorative beziers are far too
-          expensive to re-rasterize as SVG on every zoom frame. */}
-      <canvas
-        ref={canvasRef}
-        style={{
-          position: "absolute",
-          inset: 0,
-          display: "block",
-          pointerEvents: "none",
-        }}
-      />
       <svg
         ref={svgRef}
         style={{
@@ -413,6 +355,10 @@ export function MindMap() {
           height: "100%",
           display: "block",
           background: "transparent",
+        }}
+        onClick={(e) => {
+          // A tap on empty canvas closes any pinned admin actions.
+          if (e.target === e.currentTarget) setTouchActiveId(null);
         }}
       >
         <g ref={gRef}>
@@ -476,10 +422,12 @@ export function MindMap() {
                     node={n}
                     expanded={expanded.has(n.data.id)}
                     hasChildrenInData={dataHasChildren}
-                    focused={focusedId === n.data.id}
-                    focusedDepth={focusedDepth}
+                    boxWidth={laidOut.columnWidths[n.depth]}
+                    touchActive={touchActiveId === n.data.id}
+                    onTouchSelect={setTouchActiveId}
                     onToggle={toggle}
                     ensureExpanded={ensureExpanded}
+                    onCreated={setRevealId}
                     initialX={initialX}
                     initialY={initialY}
                     enterDelay={introComplete ? 0 : introDelay(n.depth, index)}
