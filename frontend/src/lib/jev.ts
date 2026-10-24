@@ -3,7 +3,10 @@ import type { TreeNode } from "../types";
 // Jev (TypeSafe AI's "System One" model) returns typed decisions instead of
 // text. We ask it a single `choice` question: which existing node should this
 // new item go under. It only picks a parent; it never edits the tree itself.
-const ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+//
+// The TypeSafe API doesn't accept browser (CORS) calls, so requests go through
+// a small relay on Vercel (see /proxy) that forwards them unchanged.
+const ENDPOINT = "https://todolist-jev-proxy.vercel.app/api/jev";
 const MODEL = "jev-latest";
 // A choice question accepts at most this many options.
 const MAX_OPTIONS = 255;

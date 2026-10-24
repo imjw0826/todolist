@@ -41,3 +41,12 @@ npm run dev    # → http://localhost:5173
 - 처음 한 번 `⚙`에서 TypeSafe API 키 입력 — 그 기기의 브라우저(localStorage)에만 저장되고 빌드에 포함되지 않음
 - Jev는 부모 노드를 고르기만 하고, 기존 노드를 바꾸거나 옮기지 않음
 - Jev 호출이 실패하면 그 자리에서 위치를 직접 골라 추가 가능
+
+### Jev 중계 서버 (`proxy/`)
+
+TypeSafe API는 브라우저에서 직접 호출할 수 없어서(CORS), Vercel 함수
+`https://todolist-jev-proxy.vercel.app/api/jev`가 요청을 그대로 전달합니다.
+
+- 서버에는 API 키를 저장하지 않음 — 브라우저가 보낸 `Authorization` 헤더를 그대로 넘김
+- `imjw0826.github.io`와 `localhost:5173`에서 온 요청만 허용
+- 다시 배포: `cd proxy && npx vercel --prod`

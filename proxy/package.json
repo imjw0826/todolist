@@ -1,0 +1,5 @@
+{
+  "name": "todolist-jev-proxy",
+  "private": true,
+  "engines": { "node": "22.x" }
+}
