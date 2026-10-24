@@ -5,6 +5,7 @@ import { zoom, zoomIdentity, type ZoomBehavior } from "d3-zoom";
 import { AnimatePresence, motion } from "framer-motion";
 import { useTree } from "../hooks";
 import { layout } from "../lib/layout";
+import { useNodeReveal } from "../store";
 import { MindMapNode } from "./MindMapNode";
 import type { TreeNode } from "../types";
 
@@ -15,6 +16,16 @@ function findInTree(root: TreeNode, id: number): TreeNode | null {
     if (r) return r;
   }
   return null;
+}
+
+/** Ids from the root down to `id`, inclusive; empty if not found. */
+function pathTo(root: TreeNode, id: number): number[] {
+  if (root.id === id) return [root.id];
+  for (const c of root.children ?? []) {
+    const p = pathTo(c, id);
+    if (p.length) return [root.id, ...p];
+  }
+  return [];
 }
 
 function collectIds(node: TreeNode, into: Set<number>) {
@@ -144,6 +155,23 @@ export function MindMap() {
       return next;
     });
   };
+
+  // A node added from outside the map (the Jev bar): open every branch down
+  // to its parent, then pan to it like a node added with the + button.
+  const revealRequest = useNodeReveal((st) => st.request);
+  const clearReveal = useNodeReveal((st) => st.clear);
+  useEffect(() => {
+    if (!revealRequest || !data) return;
+    const path = pathTo(data, revealRequest.parentId);
+    setExpanded((prev) => {
+      if (path.every((id) => prev.has(id))) return prev;
+      const next = new Set(prev);
+      for (const id of path) next.add(id);
+      return next;
+    });
+    setRevealId(revealRequest.nodeId);
+    clearReveal();
+  }, [revealRequest, data, clearReveal]);
 
   const ready = Boolean(laidOut);
 

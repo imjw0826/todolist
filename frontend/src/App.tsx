@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MindMap } from "./components/MindMap";
 import { AdminLock } from "./components/AdminLock";
+import { JevBar } from "./components/JevBar";
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { staleTime: 30_000 } },
@@ -12,6 +13,7 @@ export default function App() {
       <div style={{ width: "100vw", height: "100vh", position: "relative" }}>
         <h1 className="app-title">todolist</h1>
         <AdminLock />
+        <JevBar />
         <MindMap />
       </div>
     </QueryClientProvider>
